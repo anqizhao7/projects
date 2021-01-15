@@ -1,0 +1,311 @@
+---
+pagetitle: UNICEF Health Expense Efficiency Analysis
+output:
+  html_document:
+    theme: flatly
+    df_print: paged
+  pdf_document: default
+date: '''r format(Sys.time(), ''(%d %B %Y'')'''
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, echo = FALSE)
+options(scipen=10000)
+
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(ggiraph)
+library(data.table)
+
+```
+
+<h1 style="text-align:center;">UNICEF HEALTH EXPENSE EFFICIENCY ANALYSIS</h1>
+
+### PREPARE DATA
+<label style="font-size:14px; font-weight:600; border-bottom: solid 2px #2bbdac; width: 100%;"></label>
+__LOAD DATASET 1: Estimates of Under-five mortality rate by UNICEF region__
+
+_Data is collected from [UNICEF Data Warehouse](https://data.unicef.org/resources/data_explorer/unicef_f/?ag=UNICEF&df=GLOBAL_DATAFLOW&ver=1.0&dq=.CME_MRY0T4..&startPeriod=2009&endPeriod=2019){target="_blank"}._
+
+
+```{r, message=FALSE, echo=FALSE}
+
+df_MR5 <- read.csv("Estimates of Under-five mortality rate by UNICEF region.csv")
+
+```
+
+__LOAD DATASET 2: Expense for health per region__
+
+_Data is collected from reports: \
+[Global annual results report 2019 goal area 1](https://www.unicef.org/media/73351/file/Global-annual-results-report-2019-goal-area-1.pdf){target="_blank"}, [Global annual results report 2018 goal area 1](https://www.unicef.org/media/54971/file/Global_Annual_Results_Report_2018_Goal_Area_1.pdf){target="_blank"}, [Annual Results Report 2017 Health](https://www.unicef.org/media/47736/file/Annual_Results_Report_2017_Health.pdf){target="_blank"}, [Annual Results Report
+2016](https://www.unicef.org/media/49126/file/2016arr_health.pdf){target="_blank"}, [UNICEF Annual Results Report 2015](https://www.unicef.org/media/50046/file/UNICEF_Annual_Report_2015_ENG.pdf){target="_blank"}, [2014 Annual Results Report health](https://www.unicef.org/media/50731/file/2014_Annual_Results_Report_health.pdf){target="_blank"}._
+
+
+```{r, message=FALSE, echo=FALSE}
+df_HE <- read.csv("expense for health per region.csv")
+df_HE$Year<-as.character(df_HE$Year)
+
+```
+
+
+__Data Wrangling__
+
+```{r, message=FALSE, echo=FALSE}
+# Filter dataset1
+df_MR5_filtered <-df_MR5 %>% filter(Uncertainty.Bounds.=='Median')%>%
+  select(Region.Name,X2014.5,X2015.5,X2016.5,X2017.5,X2018.5,X2019.5)%>%
+  rename(Region=Region.Name, '2014'=X2014.5,'2015'=X2015.5,'2016'=X2016.5,'2017'=X2017.5,'2018'=X2018.5,'2019'=X2019.5)
+
+# Transform wide to long
+df_MR5_long<-df_MR5_filtered%>%pivot_longer(cols='2014':'2019', names_to='Year',values_to = 'Under_Five_Mortality_Rate')
+df_MR5_long$Under_Five_Mortality_Rate<- round(df_MR5_long$Under_Five_Mortality_Rate, 2)
+# Map region using UNICEF REGIONAL CLASSIFICATIONS: https://data.unicef.org/regionalclassifications/
+df_MR5_region<-df_MR5_long%>% 
+  filter(Region!='Sub-Saharan Africa')%>%
+  filter(Region!='Eastern Europe and Central Asia' )%>%
+  filter(Region!='Western Europe' )
+
+df_MR5_region <- transform(df_MR5_region, Region = ifelse(Region=='Europe', 'Central and Eastern Europe and the Commonwealth of Independent States',as.character(df_MR5_region$Region)))
+
+# Join two tables
+df<-full_join(df_MR5_region,df_HE)
+# Remove headquarters
+df<-df%>%filter(Region!='headquarters')
+df
+```
+
+### MAKE PLOTS
+<label style="font-size:14px; font-weight:600; border-bottom: solid 2px #2bbdac; width: 100%;"></label>
+__LEVEL ONE: WORLD ESTIMATES OF UNDER-FIVE MORTALITY RATE VS. UNICEF TOTAL HEALTH EXPENSE IN US MILLIONS PER YEAR__
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+theme_opts <- theme(panel.background = element_rect(fill = "white",colour = "white"), axis.text.y=element_blank(),axis.ticks.y=element_blank(),legend.title = element_blank(),  axis.title.y = element_text(color='#00bfff'), axis.title.y.right = element_text(color='#f542a1'), axis.title.x = element_blank(),plot.title = element_text(hjust = 0.5),legend.position = "none")
+
+
+# Value used to transform the data
+coeff <- 30
+
+p1 <- ggplot(data=df%>%filter(Region=='World'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('World')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-2,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=2,label=Health_Expense),color='#f542a1',size=3)
+
+p1
+
+```
+
+
+__LEVEL TWO: REGIONAL ESTIMATES OF UNDER-FIVE MORTALITY RATE VS. UNICEF TOTAL HEALTH EXPENSE IN US MILLIONS PER YEAR__
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+# Value used to transform the data
+coeff <- 4
+
+p2 <- ggplot(data=df%>%filter(Region=='West and Central Africa'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('West and Central Africa')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-6,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=6,label=Health_Expense),color='#f542a1',size=3)
+
+p2
+
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 5
+
+p3 <- ggplot(data=df%>%filter(Region=='Eastern and Southern Africa'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('Eastern and Southern Africa')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-4,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=4,label=Health_Expense),color='#f542a1',size=3)
+
+p3
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 8
+
+p4 <- ggplot(data=df%>%filter(Region=='Middle East and North Africa'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('Middle East and North Africa')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-2,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=2,label=Health_Expense),color='#f542a1',size=3)
+
+p4
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 6
+
+p5 <- ggplot(data=df%>%filter(Region=='South Asia'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('South Asia')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-4,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=4,label=Health_Expense),color='#f542a1',size=3)
+
+p5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 4
+
+p4 <- ggplot(data=df%>%filter(Region=='East Asia and Pacific'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('East Asia and Pacific')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-1,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=1,label=Health_Expense),color='#f542a1',size=3)
+
+p4
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 2
+
+p4 <- ggplot(data=df%>%filter(Region=='Europe and Central Asia'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('Europe and Central Asia')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-1,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=1,label=Health_Expense),color='#f542a1',size=3)
+
+p4
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 3
+
+p5 <- ggplot(data=df%>%filter(Region=='Central and Eastern Europe and the Commonwealth of Independent States'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('Central and Eastern Europe and the Commonwealth of Independent States')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-.5,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=.5,label=Health_Expense),color='#f542a1',size=3)
+
+p5
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,fig.width=11, fig.height=3}
+
+
+# Value used to transform the data
+coeff <- 2
+
+p6 <- ggplot(data=df%>%filter(Region=='Latin America and Caribbean'),aes(x=Year)) +
+         geom_step(mapping=aes(y=Under_Five_Mortality_Rate),group=1,size=1,color='#00bfff') +
+         geom_col(aes(y=(Health_Expense/coeff)),alpha=.4,width=.5,fill='#f542a1')+
+         geom_point(mapping=aes(y=Under_Five_Mortality_Rate),size=2,color='#00bfff')+  
+      scale_y_continuous(   # Features of the first axis
+      name = "Under Five Mortality Rate",
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~.*coeff, name="Health Expense in US Millions")
+      )+
+      theme_opts+
+      ggtitle('Latin America and Caribbean')+
+    geom_text(mapping=aes(y=Under_Five_Mortality_Rate-1,label=Under_Five_Mortality_Rate),color='#00bfff',size=3)+
+    geom_text(mapping=aes(y=1,label=Health_Expense),color='#f542a1',size=3)
+
+p6
+```
+
+
+<label style="font-size:14px; font-weight:600; border-bottom: solid 2px #2bbdac; width: 100%;"></label>
+
+Some interesting trends/movements pop up when looking at plots at the regional level. 
+
+For instance, in __Latin America and Caribbean__, health __expense in 2016 dropped__ to 17 US millions, and increased 2 US millions in 2017, while Under-five __mortality rate increased__ 0.01 in 2016 compared to 2015, and dropped in 2017. 
+
+Does the decrease in health expense directly cause the increase of Under-five mortality rate in 2016 in Latin America and Caribbean? If so, by how much? To answer this question, we may need a deeper breakdown of expenses at the __countries level__, and bring in other factors that may cause the increase of mortality rate in that specific year at that specific region. Going forward, we can build __forecasting__ model as well to monitor the progress by each country in order to reach the __2030 SDG tagets__ together.
+
+_Please note 2015 health expense data is not available at the regional level; all the Under-five mortality rates in the plots are using the median uncertainty bounds._
